@@ -4,6 +4,11 @@ on:
   # schedule:
   #   - cron: '0 10 * * *'  # 10:00 UTC every day
   workflow_dispatch:
+    inputs:
+      run_script:
+        description: 'Script to run (e.g., automated_potd_system.py)'
+        required: false
+        default: 'automated_potd_system.py'
 
 jobs:
   potd:
@@ -53,5 +58,5 @@ jobs:
           # Start virtual display for Chrome
           sudo Xvfb -ac :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &
 
-          # Run the automated POTD system
-          python automated_potd_system.py
+          # Run the automated POTD system (or specified script)
+          python ${{ github.event.inputs.run_script }}
