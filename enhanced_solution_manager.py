@@ -28,35 +28,102 @@ def fetch_problem_details(problem_url):
 
         # For LeetCode
         if "leetcode.com" in problem_url:
-            # Look for problem description
-            desc_elements = soup.find_all(
-                ["p", "div"],
-                class_=lambda x: x
-                and any(
-                    word in x.lower() for word in ["description", "content", "problem"]
-                ),
-            )
-            for elem in desc_elements:
-                text = elem.get_text().strip()
-                if len(text) > 50:  # Reasonable description length
-                    description += text + "\n"
+            # Look for problem description with more specific selectors
+            desc_selectors = [
+                "[data-track-load='description_content']",  # Main description container (from your HTML)
+                ".elfjS",  # Class from your HTML
+                ".description__24sA",  # Description class
+                ".content__u3I1",  # Content class
+                "[class*='description']",  # Any class with description
+                "[class*='content']",  # Any class with content
+                "div[data-cy='question-title'] + div",  # Description after title
+                ".question-content__JfgR",  # Question content
+            ]
+
+            for selector in desc_selectors:
+                try:
+                    desc_elements = soup.select(selector)
+                    for elem in desc_elements:
+                        text = elem.get_text().strip()
+                        if len(text) > 100:  # More substantial description
+                            description += text + "\n"
+                            break
+                    if description:
+                        break
+                except:
+                    continue
+
+            # If still no description, try broader search
+            if not description:
+                desc_elements = soup.find_all(
+                    ["p", "div"],
+                    class_=lambda x: x
+                    and any(
+                        word in x.lower()
+                        for word in ["description", "content", "problem", "question"]
+                    ),
+                )
+                for elem in desc_elements:
+                    text = elem.get_text().strip()
+                    if len(text) > 100:  # More substantial description
+                        description += text + "\n"
 
         # For GFG
         elif "geeksforgeeks.org" in problem_url:
-            # Look for problem description
-            desc_elements = soup.find_all(
-                ["p", "div"],
-                class_=lambda x: x
-                and any(
-                    word in x.lower() for word in ["description", "content", "problem"]
-                ),
-            )
-            for elem in desc_elements:
-                text = elem.get_text().strip()
-                if len(text) > 50:
-                    description += text + "\n"
+            # Look for problem description with more specific selectors
+            desc_selectors = [
+                ".problem-statement",  # Problem statement
+                ".content",  # Content class
+                "[class*='problem']",  # Any class with problem
+                "[class*='description']",  # Any class with description
+            ]
 
-        return description[:1000] if description else None  # Limit to 1000 chars
+            for selector in desc_selectors:
+                try:
+                    desc_elements = soup.select(selector)
+                    for elem in desc_elements:
+                        text = elem.get_text().strip()
+                        if len(text) > 100:  # More substantial description
+                            description += text + "\n"
+                            break
+                    if description:
+                        break
+                except:
+                    continue
+
+            # If still no description, try broader search
+            if not description:
+                desc_elements = soup.find_all(
+                    ["p", "div"],
+                    class_=lambda x: x
+                    and any(
+                        word in x.lower()
+                        for word in ["description", "content", "problem"]
+                    ),
+                )
+                for elem in desc_elements:
+                    text = elem.get_text().strip()
+                    if len(text) > 100:  # More substantial description
+                        description += text + "\n"
+
+        # Clean up the description
+        if description:
+            # Remove extra whitespace and newlines
+            description = re.sub(r"\n\s*\n", "\n", description)
+            description = re.sub(r"\s+", " ", description)
+            description = description.strip()
+
+            # Log the description for debugging
+            logging.info(
+                f"Problem description extracted ({len(description)} chars): {description[:200]}..."
+            )
+
+            return (
+                description[:2000] if description else None
+            )  # Increased limit to 2000 chars
+        else:
+            logging.warning("No problem description found")
+            return None
 
     except Exception as e:
         logging.error(f"Error fetching problem details: {e}")
@@ -260,11 +327,26 @@ def extract_cpp_code(text):
 
 def create_cpp_prompt(problem_title, problem_url, problem_description, attempt=1):
     """Create a C++ prompt based on attempt number"""
+
+    # Enhanced problem description handling
+    if problem_description:
+        problem_desc_section = f"""
+PROBLEM DESCRIPTION:
+{problem_description}
+
+IMPORTANT: Read the problem description carefully above. The solution must match the exact requirements, input/output format, and constraints described in the problem.
+"""
+    else:
+        problem_desc_section = """
+IMPORTANT: Since no problem description was found, you must analyze the problem title and URL carefully to understand the requirements.
+Look for patterns in the title that indicate the type of problem (e.g., "Two Sum" suggests finding two numbers that add to a target).
+"""
+
     base_prompt = f"""Write ONLY a CORRECT and COMPILABLE C++ solution for: {problem_title}
 
 Problem URL: {problem_url}
 
-{f"Problem Description: {problem_description}" if problem_description else "Please analyze the problem carefully and provide a correct solution."}
+{problem_desc_section}
 
 CRITICAL REQUIREMENTS:
 - Write ONLY COMPILABLE C++ code with correct syntax
@@ -280,6 +362,7 @@ CRITICAL REQUIREMENTS:
 - DO NOT use return {{x, y}} - use return {{x, y}} or return make_pair(x, y)
 - DO NOT include any explanations or comments outside the code
 - Return ONLY the C++ code, nothing else
+- Ensure the solution matches the problem requirements exactly
 
 Provide ONLY the complete C++ code that will compile and solve the problem:
 
@@ -330,6 +413,18 @@ def generate_solution_with_openai(problem_title, problem_url, attempt=1):
     # Create prompt based on attempt
     prompt = create_cpp_prompt(problem_title, problem_url, problem_description, attempt)
 
+    # Log the final prompt being sent to LLM
+    logging.info(f"=== FINAL PROMPT SENT TO OPENAI (Attempt {attempt}) ===")
+    logging.info(f"Problem Title: {problem_title}")
+    logging.info(f"Problem URL: {problem_url}")
+    logging.info(
+        f"Problem Description Length: {len(problem_description) if problem_description else 0} chars"
+    )
+    logging.info(f"Prompt Length: {len(prompt)} chars")
+    logging.info("=== PROMPT CONTENT ===")
+    logging.info(prompt)
+    logging.info("=== END PROMPT ===")
+
     try:
         response = openai_client.chat.completions.create(
             model=MODEL_NAME,
@@ -339,6 +434,14 @@ def generate_solution_with_openai(problem_title, problem_url, attempt=1):
         )
 
         response_text = response.choices[0].message.content.strip()
+
+        # Log the response
+        logging.info(f"=== OPENAI RESPONSE (Attempt {attempt}) ===")
+        logging.info(f"Response Length: {len(response_text)} chars")
+        logging.info("=== RESPONSE CONTENT ===")
+        logging.info(response_text)
+        logging.info("=== END RESPONSE ===")
+
         code = extract_cpp_code(response_text)
 
         # Validate the code for common syntax errors
@@ -424,13 +527,26 @@ def generate_solution_with_gemini(problem_title, problem_url, attempt=1):
             problem_title, problem_url, problem_description, attempt
         )
 
-        # Print Final Prompt
-        logging.debug(f"Final Prompt {prompt}")
+        # Log the final prompt being sent to LLM
+        logging.info(f"=== FINAL PROMPT SENT TO GEMINI (Attempt {attempt}) ===")
+        logging.info(f"Problem Title: {problem_title}")
+        logging.info(f"Problem URL: {problem_url}")
+        logging.info(
+            f"Problem Description Length: {len(problem_description) if problem_description else 0} chars"
+        )
+        logging.info(f"Prompt Length: {len(prompt)} chars")
+        logging.info("=== PROMPT CONTENT ===")
+        logging.info(prompt)
+        logging.info("=== END PROMPT ===")
 
         response = gemini_model.generate_content(prompt)
 
-        # Print Final Response
-        logging.debug(f"Final Response {response}")
+        # Log the response
+        logging.info(f"=== GEMINI RESPONSE (Attempt {attempt}) ===")
+        logging.info(f"Response Length: {len(response.text)} chars")
+        logging.info("=== RESPONSE CONTENT ===")
+        logging.info(response.text)
+        logging.info("=== END RESPONSE ===")
 
         return extract_cpp_code(response.text)
 

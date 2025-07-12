@@ -232,7 +232,9 @@ class SubmissionManager:
                 for widget_id in turnstile_ids:
                     try:
                         turnstile_widget = self.driver.find_element(By.ID, widget_id)
-                        logging.warning(f"Cloudflare Turnstile widget detected with ID: {widget_id}")
+                        logging.warning(
+                            f"Cloudflare Turnstile widget detected with ID: {widget_id}"
+                        )
                         logging.info("Waiting for Turnstile to complete...")
 
                         # Wait for Turnstile to complete (up to 60 seconds)
@@ -251,7 +253,9 @@ class SubmissionManager:
                                     turnstile_found = True
                                     break
                                 else:
-                                    logging.info(f"Still waiting for Turnstile... ({wait_time}/{max_wait}s)")
+                                    logging.info(
+                                        f"Still waiting for Turnstile... ({wait_time}/{max_wait}s)"
+                                    )
                             except:
                                 pass
 
@@ -362,7 +366,9 @@ class SubmissionManager:
 
                     # Check if button is disabled
                     if login_button.get_attribute("disabled"):
-                        logging.warning("Login button is still disabled, trying to enable it...")
+                        logging.warning(
+                            "Login button is still disabled, trying to enable it..."
+                        )
 
                         # Try to remove disabled attribute
                         try:
@@ -461,11 +467,57 @@ class SubmissionManager:
 
                     # Check for Turnstile verification requirement
                     try:
-                        turnstile_response = self.driver.find_element(By.NAME, "cf-turnstile-response")
+                        turnstile_response = self.driver.find_element(
+                            By.NAME, "cf-turnstile-response"
+                        )
                         response_value = turnstile_response.get_attribute("value")
                         if not response_value or len(response_value) < 10:
-                            logging.error("Turnstile verification required but not completed")
-                            return False, "Turnstile verification required but not completed"
+                            logging.error(
+                                "Turnstile verification required but not completed"
+                            )
+
+                            # Try to find and click manual verification checkbox
+                            try:
+                                manual_checkbox_selectors = [
+                                    "//input[@type='checkbox']",
+                                    "//input[contains(@class, 'checkbox')]",
+                                    "//div[contains(@class, 'checkbox')]//input",
+                                    "//label[contains(text(), 'Verify')]//input",
+                                    "//div[contains(text(), 'Verify you are human')]//input",
+                                    "//input[contains(@aria-label, 'Verify')]",
+                                ]
+
+                                checkbox_found = False
+                                for selector in manual_checkbox_selectors:
+                                    try:
+                                        checkbox = self.driver.find_element(
+                                            By.XPATH, selector
+                                        )
+                                        if not checkbox.is_selected():
+                                            checkbox.click()
+                                            logging.info(
+                                                "Manual verification checkbox clicked"
+                                            )
+                                            time.sleep(3)  # Wait for verification
+                                            checkbox_found = True
+                                            break
+                                    except NoSuchElementException:
+                                        continue
+
+                                if not checkbox_found:
+                                    logging.warning(
+                                        "Manual verification checkbox not found"
+                                    )
+
+                            except Exception as e:
+                                logging.warning(
+                                    f"Error handling manual verification: {e}"
+                                )
+
+                            return (
+                                False,
+                                "Turnstile verification required but not completed",
+                            )
                     except NoSuchElementException:
                         pass
 
