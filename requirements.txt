@@ -1,0 +1,8 @@
+openai
+beautifulsoup4
+requests
+schedule
+google-generativeai
+selenium
+webdriver-manager
+python-dotenv
