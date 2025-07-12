@@ -29,7 +29,3 @@ def save_solution(platform, identifier, code):
         logging.info(f"Saved solution to {path}")
     except IOError as e:
         logging.error(f"Error saving solution file {path}: {e}")
-
-
-# NOTE: Generation functions (generate_solution_with_openai, generate_solution)
-# have been removed from this file as they are now handled robustly in enhanced_solution_manager.py

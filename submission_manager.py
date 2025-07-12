@@ -10,15 +10,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-from urllib.parse import urljoin
 
 from config import (
     EMAIL_ADDRESS,
     EMAIL_PASSWORD,
     SMTP_SERVER,
     SMTP_PORT,
-    LEETCODE_USERNAME,
-    LEETCODE_PASSWORD,
     GFG_USERNAME,
     GFG_PASSWORD,
     CHROME_USER_DATA_DIR,
@@ -127,7 +124,6 @@ class SubmissionManager:
         base_url = "https://www.geeksforgeeks.org/problem-of-the-day"
         try:
             self.driver.get(base_url)
-            # This selector is based on the HTML you provided for the main POTD page.
             potd_link_selector = (
                 "div[class*='problemOfTheDay_potd_banner'] a[href*='/problems/']"
             )
@@ -152,7 +148,6 @@ class SubmissionManager:
             url = f"https://leetcode.com/problems/{problem_slug}/"
             self.driver.get(url)
 
-            # --- THE FINAL PASTE FIX: Direct JS injection into the editor's textarea ---
             logging.info("Waiting for Monaco editor's textarea...")
             # The textarea is where the code actually lives.
             editor_textarea = WebDriverWait(self.driver, 30).until(
@@ -227,7 +222,6 @@ class SubmissionManager:
         except Exception as e:
             return False, f"Error submitting solution to GFG: {e}"
 
-    # ... (Email and close_driver functions remain the same)
     def send_solution_email(
         self, platform, problem_title, problem_url, solution, error_message
     ):

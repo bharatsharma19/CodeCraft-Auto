@@ -55,7 +55,6 @@ class AutomatedPOTDSystem:
     def process_platform(self, platform_name, fetch_func, submit_func):
         logging.info("=" * 50 + f"\nProcessing {platform_name} POTD\n" + "=" * 50)
 
-        # If the driver failed to initialize, we can't proceed with browser-based tasks.
         if not self.submission_manager.driver:
             logging.error(
                 f"Cannot process {platform_name} because the browser driver is not available."
@@ -145,7 +144,6 @@ class AutomatedPOTDSystem:
         )
 
     def process_gfg_potd(self):
-        # --- KEY FIX: Use the browser-based fetcher from the submission manager ---
         return self.run_with_timeout(
             self.process_platform,
             "GFG",

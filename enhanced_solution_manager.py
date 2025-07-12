@@ -24,7 +24,6 @@ def fetch_problem_details(problem_url):
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # --- KEY FIX: More specific and combined extraction ---
         if "leetcode.com" in problem_url:
             content_div = soup.select_one("div[data-track-load='description_content']")
         elif "geeksforgeeks.org" in problem_url:
@@ -64,7 +63,6 @@ def create_cpp_prompt(problem_title, problem_url, problem_description, attempt=1
     Creates a highly detailed and structured C++ prompt to maximize the chances
     of getting a correct, optimized, and complete solution.
     """
-    # --- THE MOST IMPORTANT FIX: Advanced Prompt Engineering ---
     prompt = f"""
 You are an expert C++ competitive programmer tasked with writing a solution for a daily coding challenge.
 Your goal is to produce a 100% correct, efficient, and robust solution that will pass all test cases, including edge cases and performance tests.
@@ -114,7 +112,6 @@ Your goal is to produce a 100% correct, efficient, and robust solution that will
     return prompt
 
 
-# ... (The rest of the file remains the same as the previous answer)
 def create_compilation_driver(code):
     return f"""
 #include <iostream>
