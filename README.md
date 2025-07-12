@@ -2,8 +2,6 @@
 
 A production-ready automated system that solves the daily coding problems from LeetCode and GeeksforGeeks. It uses AI to generate solutions, validates them, and handles submission with a persistent browser session to bypass modern anti-bot protections.
 
-![System Demo](https://media.geeksforgeeks.org/wp-content/uploads/2024/01/potd-gif.gif)
-
 ## 🚀 Key Features
 
 - **🤖 AI-Powered Solutions**: Generates high-quality C++ solutions using OpenAI (GPT-4) or Google Gemini.
