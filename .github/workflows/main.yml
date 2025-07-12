@@ -1,0 +1,57 @@
+name: CodeCraft-Auto Daily POTD
+
+on:
+  # schedule:
+  #   - cron: '0 10 * * *'  # 10:00 UTC every day
+  workflow_dispatch:
+
+jobs:
+  potd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Chrome and ChromeDriver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - name: Run CodeCraft-Auto daily POTD system
+        env:
+          # AI Configuration
+          USE_GEMINI: ${{ secrets.USE_GEMINI }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+          # Email Configuration
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+
+          # LeetCode Credentials
+          LEETCODE_USERNAME: ${{ secrets.LEETCODE_USERNAME }}
+          LEETCODE_PASSWORD: ${{ secrets.LEETCODE_PASSWORD }}
+
+          # GFG Credentials
+          GFG_USERNAME: ${{ secrets.GFG_USERNAME }}
+          GFG_PASSWORD: ${{ secrets.GFG_PASSWORD }}
+
+          # Display for Chrome
+          DISPLAY: :99
+        run: |
+          # Start virtual display for Chrome
+          sudo Xvfb -ac :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &
+
+          # Run the automated POTD system
+          python automated_potd_system.py

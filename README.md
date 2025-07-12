@@ -1,257 +1,165 @@
-# Enhanced Automated Daily POTD Solver
+# CodeCraft-Auto: Automated Daily POTD Solver
 
-An enhanced automated system that solves daily problems from LeetCode and GeeksforGeeks (GFG), with **test case validation**, **automatic retries**, **email notifications**, and **LeetCode login support**.
+A production-ready automated system that solves the daily coding problems from LeetCode and GeeksforGeeks. It uses AI to generate solutions, validates them, and handles submission with a persistent browser session to bypass modern anti-bot protections.
+
+![System Demo](https://media.geeksforgeeks.org/wp-content/uploads/2024/01/potd-gif.gif)
 
 ## 🚀 Key Features
 
-- 🤖 **AI-Powered Solutions**: Generates solutions using OpenAI GPT-4 or Google Gemini
-- 🧪 **Test Case Validation**: Tests solutions against actual test cases before accepting
-- 🔄 **Smart Retry System**: Retries up to 3 times with different approaches if solution fails
-- 📧 **Email Notifications**: Sends detailed email alerts when all attempts fail
-- 💾 **Local Storage**: Saves working solutions locally to avoid regenerating
-- 🚀 **GitHub Actions**: Automated daily execution via GitHub Actions
-- ✅ **Compilation Testing**: Ensures generated code compiles successfully
-- 🔐 **LeetCode Login**: Supports authenticated submissions to LeetCode
+- **🤖 AI-Powered Solutions**: Generates high-quality C++ solutions using OpenAI (GPT-4) or Google Gemini.
+- **🛡️ Persistent Login Sessions**: Uses a dedicated Chrome profile to maintain login sessions, bypassing CAPTCHAs and login forms on subsequent runs.
+- **✅ Compilation Validation**: Ensures AI-generated code is syntactically correct and compiles successfully before any submission attempt.
+- **🔄 Smart Retry Logic**: If the AI generates a non-compiling solution, it retries with a different prompt to get an alternative solution.
+- **📧 HTML Email Notifications**: Sends beautifully formatted HTML emails for manual intervention if automation fails, with correctly formatted code blocks.
+- **💾 Local Solution Caching**: Saves valid, compiled solutions locally to avoid redundant API calls on the same day.
+- **🚀 GitHub Actions Ready**: Designed for automated daily execution via GitHub Actions.
+- **🌐 Full GFG & LeetCode Support**: Handles login, scraping, and submission for both platforms.
 
-## 🔧 Enhanced Workflow
+## 🔧 System Architecture & Workflow
+
+The system is designed for resilience against modern web application challenges like client-side rendering and anti-bot measures.
 
 ```
-1. Fetch Problem → 2. Generate Solution → 3. Test Solution → 4. Login & Submit or Retry
-     ↓                    ↓                    ↓                    ↓
-   Problem URL        AI Generation      Test Cases         Success/Email
+graph TD
+    A[Start] --> B{Initialize Browser with Persistent Profile};
+    B --> C{Process LeetCode};
+    C --> D{Process GFG};
+    D --> E[End & Cleanup];
+
+    subgraph Process LeetCode
+        C1[Fetch POTD Info] --> C2{Check for Local Solution};
+        C2 -- No --> C3[Generate & Compile Solution];
+        C2 -- Yes --> C4[Submit Solution];
+        C3 --> C4;
+        C4 -- Success --> C5[Log Success];
+        C4 -- Failure --> C6[Send Email Alert];
+    end
+
+    subgraph Process GFG
+        D1[Fetch POTD with Browser] --> D2{Check for Local Solution};
+        D2 -- No --> D3[Generate & Compile Solution];
+        D2 -- Yes --> D4[Submit Solution];
+        D3 --> D4;
+        D4 -- Success --> D5[Log Success];
+        D4 -- Failure --> D6[Send Email Alert];
+    end
 ```
 
 ### Detailed Process:
 
-1. **Problem Fetching**: Gets daily problems from LeetCode and GFG
-2. **Solution Generation**: AI generates C++ solution with problem context
-3. **Test Case Validation**:
-   - Compiles the solution
-   - Runs basic test cases
-   - Validates solution structure
-4. **Retry Logic**: If tests fail, generates new solution (max 3 attempts)
-5. **Login & Submission**: Logs into LeetCode and submits working solution
-6. **Email Notification**: Sends email if all attempts fail
+1.  **Initialize Browser**: The script launches a Chrome browser using a persistent user profile, which stores login cookies.
+2.  **One-Time Manual Login**: On the very first run, the user must manually log in to LeetCode and GFG in the opened browser window.
+3.  **Session Restoration**: On all future runs, the browser loads the profile and is already logged in, bypassing CAPTCHAs.
+4.  **Problem Fetching**:
+    - **LeetCode**: Fetches POTD info via its GraphQL API.
+    - **GFG**: Uses the live browser to navigate to the POTD page, ensuring all JavaScript-rendered content is available for scraping.
+5.  **Solution Generation**: If no valid local solution exists, the AI is prompted with a highly detailed request to generate a correct and efficient C++ solution.
+6.  **Compilation Check**: The generated code is compiled to ensure it's syntactically valid. If it fails, the system retries with a new prompt.
+7.  **Submission**: The validated solution is pasted into the editor and submitted. The script waits for a definitive success or failure result.
+8.  **Notification**: If any step fails in a way that requires user intervention (e.g., submission timeout), a detailed HTML email is sent.
 
-## System Architecture
+## 🛠️ Setup and Usage
+
+### Step 1: Clone the Repository
 
 ```
-├── enhanced_solution_manager.py  # AI solution generation with testing
-├── automated_potd_system.py     # Main orchestration system
-├── submission_manager.py         # Web automation, login, and email notifications
-├── problem_fetcher.py           # Problem fetching from platforms
-├── solution_manager.py          # Local storage management
-├── config.py                   # Configuration and credentials
-└── test_*.py                   # Test files for various components
+git clone https://github.com/bharatsharma19/CodeCraft-Auto.git
+cd CodeCraft-Auto
 ```
 
-## 🔐 LeetCode Login Setup
+### Step 2: Install Dependencies
 
-To enable LeetCode submissions, you need to set up your LeetCode credentials:
+It is highly recommended to use a virtual environment.
 
-### 1. Environment Variables
+```
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-Add these to your `.env` file or set as environment variables:
+# Install required packages
+pip install -r requirements.txt
+```
 
-```bash
-# LeetCode Credentials (Required for submissions)
+### Step 3: Configure Environment Variables
+
+Create a file named `.env` in the root of your project and add your credentials.
+
+```
+# --- AI Configuration ---
+# Set to "True" for Gemini, "False" for OpenAI
+USE_GEMINI=True
+GEMINI_API_KEY=your-gemini-api-key
+OPENAI_API_KEY=your-openai-api-key
+
+# --- LeetCode Login Credentials ---
 LEETCODE_USERNAME=your-leetcode-username
 LEETCODE_PASSWORD=your-leetcode-password
 
-# Existing variables
-OPENAI_API_KEY=your-openai-api-key
-GEMINI_API_KEY=your-gemini-api-key
+# --- GFG Login Credentials ---
+GFG_USERNAME=your-gfg-email@example.com
+GFG_PASSWORD=your-gfg-password
+
+# --- Email Notification Credentials (use a Gmail App Password) ---
 EMAIL_ADDRESS=your-email@gmail.com
 EMAIL_PASSWORD=your-app-password
 ```
 
-### 2. Test Login
+### Step 4: One-Time Manual Login (Crucial!)
 
-Run the login test to verify your credentials:
+This step is only required once. It saves your login sessions to bypass CAPTCHAs in the future.
 
-```bash
-python test_leetcode_login.py
+1.  Run the script for the first time:
+2.  A Chrome browser window will open. **Do not close it.**
+3.  In the opened browser, **manually log in to LeetCode**. Check any "Remember Me" boxes.
+4.  In a new tab in the **same browser window**, **manually log in to GeeksforGeeks**.
+5.  Once you are logged into both sites, you can close the browser window. The script will have created a `chrome_profile` directory containing your session data.
+
+### Step 5: Run the Automated System
+
+All subsequent runs will be fully automatic.
+
 ```
-
-### 3. Advanced Testing (if login fails)
-
-If the basic login test fails, try these comprehensive tests:
-
-```bash
-# Test comprehensive login with advanced button handling
-python test_comprehensive_login.py
-
-# Test advanced Cloudflare bypass
-python test_cloudflare_advanced.py
-
-# Test manual login simulation
-python test_manual_login.py
-
-# Test button enable strategies
-python test_button_enable.py
-```
-
-### 4. Security Notes
-
-- **Never commit credentials** to version control
-- Use environment variables or `.env` files
-- Consider using app-specific passwords if available
-- Regularly update your credentials
-
-## 🧪 Test Case Validation
-
-The enhanced system includes:
-
-1. **Compilation Testing**: Ensures code compiles without errors
-2. **Structure Validation**: Checks for essential C++ elements
-3. **Basic Test Cases**: Runs simple test scenarios
-4. **Error Handling**: Catches and reports compilation errors
-
-## 🔄 Smart Retry Logic
-
-The system now distinguishes between:
-
-### Solution Correctness Failures
-
-- Wrong Answer, Runtime Error, Time Limit Exceeded
-- **Action**: Generate new solution
-
-### UI/Automation Failures
-
-- Could not find submit button, browser issues
-- **Action**: Retry submission with same solution
-
-This prevents wasting good solutions when submission fails due to UI issues.
-
-## 📧 Email Notification System
-
-The system sends email notifications when:
-
-- All 3 solution generation attempts fail
-- All 3 submission attempts fail
-- Solution structure is invalid
-- Any critical error occurs
-
-Email includes:
-
-- Platform (LeetCode/GFG)
-- Problem title and URL
-- Detailed error message
-- Number of attempts made
-
-## 🔧 GitHub Actions Setup
-
-1. **Add Secrets** to your GitHub repository:
-
-   - `OPENAI_API_KEY`
-   - `GEMINI_API_KEY` (optional)
-   - `EMAIL_ADDRESS`
-   - `EMAIL_PASSWORD`
-   - `LEETCODE_USERNAME`
-   - `LEETCODE_PASSWORD`
-
-2. **Workflow**: The system runs daily at 10:00 UTC via GitHub Actions
-
-## 🛠️ Production Deployment & Usage
-
-This system is now production-ready. Only the following files are required:
-
-- `automated_potd_system.py` (main orchestrator)
-- `config.py` (configuration loader)
-- `enhanced_solution_manager.py` (AI and validation logic)
-- `problem_fetcher.py` (fetches problems)
-- `solution_manager.py` (solution storage/generation)
-- `submission_manager.py` (handles submission and email)
-- `requirements.txt`
-- `README.md`
-
-All test and debug scripts have been removed for production. For troubleshooting, use logging as described below.
-
-## 🪵 Logging & Error Handling
-
-- All system output now uses Python's `logging` module.
-- Logs are output to the console with timestamps and severity levels.
-- For production, you can redirect logs to a file or external logging system by adjusting the `logging.basicConfig` call in `automated_potd_system.py`.
-- All errors are logged with appropriate severity (`logging.error`, `logging.warning`, etc.).
-
-## 🔧 Configuration
-
-- All credentials and API keys must be set via environment variables or a `.env` file.
-- See `config.py` for details on required variables.
-
-## 🚀 Usage
-
-Run the complete system:
-
-```bash
 python automated_potd_system.py
 ```
 
-## 📦 Requirements
+## 🚀 GitHub Actions Setup
 
-Install dependencies:
+To run this system automatically every day:
 
-```bash
-pip install -r requirements.txt
-```
-
-## 📊 Features Summary
-
-| Feature                | Status | Description                           |
-| ---------------------- | ------ | ------------------------------------- |
-| AI Solution Generation | ✅     | OpenAI GPT-4 or Google Gemini         |
-| Test Case Validation   | ✅     | Compilation and basic testing         |
-| Smart Retry Logic      | ✅     | Distinguishes solution vs UI failures |
-| LeetCode Login         | ✅     | Authenticated submissions             |
-| Email Notifications    | ✅     | Failure alerts with details           |
-| Local Storage          | ✅     | Saves working solutions               |
-| GitHub Actions         | ✅     | Automated daily execution             |
-| GFG Support            | ✅     | GeeksforGeeks integration             |
+1.  **Fork the repository** to your GitHub account.
+2.  Go to your repository's **Settings > Secrets and variables > Actions**.
+3.  Create the following **Repository secrets** and paste the corresponding values from your `.env` file:
+    - `USE_GEMINI`
+    - `GEMINI_API_KEY`
+    - `OPENAI_API_KEY`
+    - `LEETCODE_USERNAME`
+    - `LEETCODE_PASSWORD`
+    - `GFG_USERNAME`
+    - `GFG_PASSWORD`
+    - `EMAIL_ADDRESS`
+    - `EMAIL_PASSWORD`
+4.  The workflow file (`.github/workflows/main.yml`) is already configured to run daily. It will use these secrets to execute the script.
 
 ## 🔧 Troubleshooting
 
-### Common Issues
-
-1. **LeetCode Login Fails**
-
-   - Verify credentials are correct
-   - Check if 2FA is enabled (may need app password)
-   - Ensure account is not locked
-
-2. **Submit Button Not Found**
-
-   - System will retry with same solution
-   - Check if LeetCode UI has changed
-   - Verify login was successful
-
-3. **Solution Generation Fails**
-   - Check API keys are valid
-   - Verify internet connection
-   - Check API rate limits
-
-### Debug Mode
-
-Run with verbose logging:
-
-```bash
-python -u automated_potd_system.py
-```
-
-## 📈 Performance
-
-- **Solution Generation**: ~30-60 seconds per attempt
-- **Test Case Validation**: ~5-10 seconds
-- **LeetCode Submission**: ~15-30 seconds
-- **Total Runtime**: ~2-5 minutes per platform
+- **Login Fails / CAPTCHA Appears:** Your saved session might have expired. Delete the `chrome_profile` directory from your project and re-run the one-time manual login step.
+- **GFG Scraper Fails:** GeeksforGeeks may have changed their website layout. The selectors in `submission_manager.py` inside the `get_gfg_potd_with_browser` function may need to be updated.
+- `**Read timed out**` **Error:** This can happen if your internet connection is slow or the target website is under heavy load. The script has long timeouts, but this can still occur. Simply re-running it often resolves the issue.
 
 ## 🤝 Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+Contributions are welcome! Please feel free to submit a pull request.
+
+1.  Fork the repository.
+2.  Create a new feature branch (`git checkout -b feature/AmazingFeature`).
+3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4.  Push to the branch (`git push origin feature/AmazingFeature`).
+5.  Open a Pull Request.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License. See the `LICENSE` file for details.
+
+```
+python automated_potd_system.py
+```
