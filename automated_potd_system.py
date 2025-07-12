@@ -1,24 +1,19 @@
 import time
 import threading
-from problem_fetcher import get_leetcode_potd, get_gfg_potd
-from enhanced_solution_manager import (
-    generate_and_test_solution,
-    validate_solution_structure,
-)
+import logging
+from problem_fetcher import get_leetcode_potd
+from enhanced_solution_manager import generate_and_test_solution
 from submission_manager import SubmissionManager
 from solution_manager import load_local_solution, save_solution
-from config import check_api_keys, check_email_config
-import logging
+from config import check_api_keys
 
 
 class TimeoutError(Exception):
     pass
 
 
-def timeout_handler(func, *args, **kwargs):
-    """Execute function with timeout using threading"""
-    result = [None]
-    exception = [None]
+def timeout_handler(func, timeout_seconds, *args, **kwargs):
+    result, exception = [None], [None]
 
     def target():
         try:
@@ -26,431 +21,159 @@ def timeout_handler(func, *args, **kwargs):
         except Exception as e:
             exception[0] = e
 
-    thread = threading.Thread(target=target)
-    thread.daemon = True
+    thread = threading.Thread(target=target, daemon=True)
     thread.start()
-    thread.join(timeout=600)  # 10 minutes timeout
-
+    thread.join(timeout=timeout_seconds)
     if thread.is_alive():
-        raise TimeoutError("Operation timed out after 10 minutes")
-
+        raise TimeoutError(f"Operation timed out after {timeout_seconds} seconds")
     if exception[0]:
         raise exception[0]
-
     return result[0]
 
 
 class AutomatedPOTDSystem:
     def __init__(self):
         self.submission_manager = SubmissionManager()
-        self.max_retries = 2  # Reduced from 3 to 2
-        self.global_timeout = 600  # 10 minutes global timeout
+        self.max_retries = 2
+        self.global_timeout = 900
         logging.basicConfig(
-            level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
 
     def run_with_timeout(self, func, *args, **kwargs):
-        """Run a function with a timeout using threading"""
         try:
-            return timeout_handler(func, *args, **kwargs)
-        except TimeoutError:
-            logging.error("Operation timed out after 10 minutes")
+            return timeout_handler(func, self.global_timeout, *args, **kwargs)
+        except TimeoutError as e:
+            logging.error(str(e))
             return False
         except Exception as e:
-            logging.error(f"Error in operation: {e}")
+            logging.error(f"An unhandled exception occurred: {e}", exc_info=True)
+            return False
+
+    def process_platform(self, platform_name, fetch_func, submit_func):
+        logging.info("=" * 50 + f"\nProcessing {platform_name} POTD\n" + "=" * 50)
+
+        # If the driver failed to initialize, we can't proceed with browser-based tasks.
+        if not self.submission_manager.driver:
+            logging.error(
+                f"Cannot process {platform_name} because the browser driver is not available."
+            )
+            return False
+
+        try:
+            title, slug_or_url, url = fetch_func()
+            if "Error" in title:
+                logging.error(f"Failed to fetch {platform_name} POTD: {title}")
+                return False
+
+            logging.info(f"{platform_name} POTD: {title}\nURL: {url}")
+            slug = (
+                slug_or_url
+                if platform_name == "LeetCode"
+                else title.lower().replace(" ", "-")
+            )
+
+            solution, found = load_local_solution(platform_name.lower(), slug)
+            if not found:
+                logging.info("No local solution found. Generating new one...")
+                solution, _, success = generate_and_test_solution(
+                    title, url, self.max_retries
+                )
+                if not success:
+                    error_msg = f"Failed to generate a compilable solution after {self.max_retries} attempts."
+                    self.submission_manager.send_failure_notification(
+                        platform_name, title, error_msg
+                    )
+                    return False
+                save_solution(platform_name.lower(), slug, solution)
+
+            logging.info(f"Submitting solution to {platform_name}...")
+            success, message = submit_func(slug_or_url, solution)
+
+            if success:
+                logging.info(
+                    f"{platform_name} solution submitted successfully! Result: {message}"
+                )
+                return True
+            else:
+                logging.error(f"{platform_name} submission failed: {message}")
+                is_ui_failure = (
+                    "timeout" in message.lower()
+                    or "login" in message.lower()
+                    or "captcha" in message.lower()
+                    or "driver" in message.lower()
+                )
+
+                if is_ui_failure:
+                    logging.warning(
+                        "Critical UI/Login failure detected. Sending solution to email."
+                    )
+                    self.submission_manager.send_solution_email(
+                        platform_name,
+                        title,
+                        url,
+                        solution,
+                        f"Submission UI Failure: {message}",
+                    )
+                else:
+                    logging.warning(
+                        "Submission failed, likely due to solution correctness (e.g., Wrong Answer)."
+                    )
+                    self.submission_manager.send_failure_notification(
+                        platform_name, title, f"Submission Failed: {message}"
+                    )
+                return False
+
+        except Exception as e:
+            logging.error(
+                f"An unexpected error occurred while processing {platform_name}: {e}",
+                exc_info=True,
+            )
+            self.submission_manager.send_failure_notification(
+                platform_name, "Unknown", f"An unexpected error occurred: {e}"
+            )
             return False
 
     def process_leetcode_potd(self):
-        """Process LeetCode POTD with automated submission and testing"""
-        return self.run_with_timeout(self._process_leetcode_potd_internal)
-
-    def _process_leetcode_potd_internal(self):
-        """Internal method for processing LeetCode POTD"""
-        logging.info("=" * 50)
-        logging.info("Processing LeetCode POTD")
-        logging.info("=" * 50)
-
-        try:
-            # Fetch LeetCode POTD
-            lc_title, lc_slug, lc_url = get_leetcode_potd()
-            logging.info(f"LeetCode POTD: {lc_title}")
-            logging.info(f"URL: {lc_url}")
-
-            # Check if we already have a solution
-            lc_solution, found = load_local_solution("leetcode", lc_slug)
-            if found:
-                logging.info("Found existing solution, testing it...")
-                # Test the existing solution
-                success, message = self.test_solution(lc_solution, lc_title, lc_url)
-                if not success:
-                    logging.warning(f"Existing solution failed tests: {message}")
-                    lc_solution = None  # Will regenerate
-                else:
-                    logging.info("Existing solution passed tests")
-            else:
-                logging.info("No existing solution found, generating new one...")
-                lc_solution = None
-
-            # Generate new solution if needed
-            if not lc_solution:
-                logging.info("Generating and testing solution...")
-                lc_solution, attempt, success = generate_and_test_solution(
-                    lc_title, lc_url, self.max_retries
-                )
-
-                if not success:
-                    logging.error(
-                        f"Failed to generate working solution after {self.max_retries} attempts"
-                    )
-                    # Send solution to email when generation fails
-                    self.send_solution_to_email(
-                        "LeetCode", lc_title, lc_url, lc_solution, "Generation failed"
-                    )
-                    return False
-
-                # Save the working solution
-                save_solution("leetcode", lc_slug, lc_solution)
-                logging.info(f"Solution generated and saved (attempt {attempt})")
-
-            # Validate solution structure
-            if not validate_solution_structure(lc_solution):
-                logging.error("Generated solution has invalid structure")
-                self.send_solution_to_email(
-                    "LeetCode", lc_title, lc_url, lc_solution, "Invalid structure"
-                )
-                return False
-
-            # Submit solution
-            logging.info("Submitting solution to LeetCode...")
-            success, message = self.submission_manager.submit_leetcode_solution(
-                lc_slug, lc_solution
-            )
-
-            if success:
-                logging.info("LeetCode solution submitted successfully!")
-                return True
-            else:
-                logging.error(f"LeetCode submission failed: {message}")
-
-                # Check if it's a login failure or other critical issue
-                is_login_failure = (
-                    "Login failed" in message
-                    or "Could not find submit button" in message
-                    or "Driver not available" in message
-                    or "Could not find code editor" in message
-                    or "timeout" in message.lower()
-                )
-
-                if is_login_failure:
-                    logging.warning(
-                        "Login/UI failure detected - sending solution to email"
-                    )
-                    self.send_solution_to_email(
-                        "LeetCode",
-                        lc_title,
-                        lc_url,
-                        lc_solution,
-                        f"Login/UI failure: {message}",
-                    )
-                    return False
-                else:
-                    # Check if it's a solution correctness failure
-                    is_solution_failure = (
-                        "Wrong Answer" in message
-                        or "Runtime Error" in message
-                        or "Time Limit Exceeded" in message
-                        or "Compilation Error" in message
-                        or "Memory Limit Exceeded" in message
-                    )
-
-                    if is_solution_failure:
-                        logging.warning(
-                            "Solution correctness failure - will generate new solution"
-                        )
-                        # Try to regenerate and resubmit
-                        for retry in range(1, self.max_retries + 1):
-                            logging.info(
-                                f"Retrying with new solution (attempt {retry}/{self.max_retries})..."
-                            )
-
-                            # Generate new solution
-                            new_solution, attempt, success = generate_and_test_solution(
-                                lc_title, lc_url, self.max_retries
-                            )
-
-                            if not success:
-                                logging.error(
-                                    f"Failed to generate working solution on retry {retry}"
-                                )
-                                continue
-
-                            # Save new solution
-                            save_solution("leetcode", lc_slug, new_solution)
-
-                            # Submit new solution
-                            success, message = (
-                                self.submission_manager.submit_leetcode_solution(
-                                    lc_slug, new_solution
-                                )
-                            )
-
-                            if success:
-                                logging.info(
-                                    "LeetCode solution submitted successfully on retry!"
-                                )
-                                return True
-                            else:
-                                logging.error(f"Retry {retry} failed: {message}")
-
-                        # All retries failed
-                        self.send_solution_to_email(
-                            "LeetCode",
-                            lc_title,
-                            lc_url,
-                            lc_solution,
-                            f"Failed after {self.max_retries} submission attempts",
-                        )
-                        return False
-                    else:
-                        logging.warning("Unknown failure - sending solution to email")
-                        self.send_solution_to_email(
-                            "LeetCode",
-                            lc_title,
-                            lc_url,
-                            lc_solution,
-                            f"Unknown failure: {message}",
-                        )
-                        return False
-
-        except Exception as e:
-            logging.error(f"Error processing LeetCode POTD: {e}")
-            self.send_solution_to_email("LeetCode", "Unknown", "Unknown", "", str(e))
-            return False
+        return self.run_with_timeout(
+            self.process_platform,
+            "LeetCode",
+            get_leetcode_potd,
+            self.submission_manager.submit_leetcode_solution,
+        )
 
     def process_gfg_potd(self):
-        """Process GFG POTD with automated submission and testing"""
-        return self.run_with_timeout(self._process_gfg_potd_internal)
-
-    def _process_gfg_potd_internal(self):
-        """Internal method for processing GFG POTD"""
-        logging.info("=" * 50)
-        logging.info("Processing GFG POTD")
-        logging.info("=" * 50)
-
-        try:
-            # Fetch GFG POTD
-            gfg_title, gfg_url = get_gfg_potd()
-            gfg_slug = gfg_title.lower().replace(" ", "_").replace("-", "_")
-            logging.info(f"GFG POTD: {gfg_title}")
-            logging.info(f"URL: {gfg_url}")
-
-            # Check if we already have a solution
-            gfg_solution, found = load_local_solution("gfg", gfg_slug)
-            if found:
-                logging.info("Found existing solution, testing it...")
-                # Test the existing solution
-                success, message = self.test_solution(gfg_solution, gfg_title, gfg_url)
-                if not success:
-                    logging.warning(f"Existing solution failed tests: {message}")
-                    gfg_solution = None  # Will regenerate
-                else:
-                    logging.info("Existing solution passed tests")
-            else:
-                logging.info("No existing solution found, generating new one...")
-                gfg_solution = None
-
-            # Generate new solution if needed
-            if not gfg_solution:
-                logging.info("Generating and testing solution...")
-                gfg_solution, attempt, success = generate_and_test_solution(
-                    gfg_title, gfg_url, self.max_retries
-                )
-
-                if not success:
-                    logging.error(
-                        f"Failed to generate working solution after {self.max_retries} attempts"
-                    )
-                    # Send solution to email when generation fails
-                    self.send_solution_to_email(
-                        "GFG", gfg_title, gfg_url, gfg_solution, "Generation failed"
-                    )
-                    return False
-
-                # Save the working solution
-                save_solution("gfg", gfg_slug, gfg_solution)
-                logging.info(f"Solution generated and saved (attempt {attempt})")
-
-            # Validate solution structure
-            if not validate_solution_structure(gfg_solution):
-                logging.error("Generated solution has invalid structure")
-                self.send_solution_to_email(
-                    "GFG", gfg_title, gfg_url, gfg_solution, "Invalid structure"
-                )
-                return False
-
-            # Submit solution
-            logging.info("Submitting solution to GFG...")
-            success, message = self.submission_manager.submit_gfg_solution(
-                gfg_url, gfg_solution
-            )
-
-            if success:
-                logging.info("GFG solution submitted successfully!")
-                return True
-            else:
-                logging.error(f"GFG submission failed: {message}")
-
-                # Check if it's a login failure or other critical issue
-                is_login_failure = (
-                    "Login failed" in message
-                    or "Could not find submit button" in message
-                    or "Driver not available" in message
-                    or "Could not find code editor" in message
-                    or "timeout" in message.lower()
-                )
-
-                if is_login_failure:
-                    logging.warning(
-                        "Login/UI failure detected - sending solution to email"
-                    )
-                    self.send_solution_to_email(
-                        "GFG",
-                        gfg_title,
-                        gfg_url,
-                        gfg_solution,
-                        f"Login/UI failure: {message}",
-                    )
-                    return False
-                else:
-                    # Check if it's a solution correctness failure
-                    is_solution_failure = (
-                        "Wrong Answer" in message
-                        or "Runtime Error" in message
-                        or "Time Limit Exceeded" in message
-                        or "Compilation Error" in message
-                        or "Memory Limit Exceeded" in message
-                    )
-
-                    if is_solution_failure:
-                        logging.warning(
-                            "Solution correctness failure - will generate new solution"
-                        )
-                        # Try to regenerate and resubmit
-                        for retry in range(1, self.max_retries + 1):
-                            logging.info(
-                                f"Retrying with new solution (attempt {retry}/{self.max_retries})..."
-                            )
-
-                            # Generate new solution
-                            new_solution, attempt, success = generate_and_test_solution(
-                                gfg_title, gfg_url, self.max_retries
-                            )
-
-                            if not success:
-                                logging.error(
-                                    f"Failed to generate working solution on retry {retry}"
-                                )
-                                continue
-
-                            # Save new solution
-                            save_solution("gfg", gfg_slug, new_solution)
-
-                            # Submit new solution
-                            success, message = (
-                                self.submission_manager.submit_gfg_solution(
-                                    gfg_url, new_solution
-                                )
-                            )
-
-                            if success:
-                                logging.info(
-                                    "GFG solution submitted successfully on retry!"
-                                )
-                                return True
-                            else:
-                                logging.error(f"Retry {retry} failed: {message}")
-
-                        # All retries failed
-                        self.send_solution_to_email(
-                            "GFG",
-                            gfg_title,
-                            gfg_url,
-                            gfg_solution,
-                            f"Failed after {self.max_retries} submission attempts",
-                        )
-                        return False
-                    else:
-                        logging.warning("Unknown failure - sending solution to email")
-                        self.send_solution_to_email(
-                            "GFG",
-                            gfg_title,
-                            gfg_url,
-                            gfg_solution,
-                            f"Unknown failure: {message}",
-                        )
-                        return False
-
-        except Exception as e:
-            logging.error(f"Error processing GFG POTD: {e}")
-            self.send_solution_to_email("GFG", "Unknown", "Unknown", "", str(e))
-            return False
-
-    def test_solution(self, solution, problem_title, problem_url):
-        """Test a solution against test cases"""
-        from enhanced_solution_manager import test_solution_with_cases
-
-        return test_solution_with_cases(solution, problem_title, problem_url)
-
-    def send_solution_to_email(
-        self, platform, problem_title, problem_url, solution, error_message
-    ):
-        """Send solution to email when submission fails or login issues occur"""
-        if check_email_config():
-            self.submission_manager.send_solution_email(
-                platform, problem_title, problem_url, solution, error_message
-            )
-        else:
-            logging.warning("Email notification skipped - email not configured")
-            logging.error(f"Failure: {platform} - {problem_title} - {error_message}")
-
-    def send_failure_notification(self, platform, problem_title, error_message):
-        """Send email notification for failures"""
-        if check_email_config():
-            self.submission_manager.send_email_notification(
-                platform, problem_title, error_message
-            )
-        else:
-            logging.warning("Email notification skipped - email not configured")
-            logging.error(f"Failure: {platform} - {problem_title} - {error_message}")
+        # --- KEY FIX: Use the browser-based fetcher from the submission manager ---
+        return self.run_with_timeout(
+            self.process_platform,
+            "GFG",
+            self.submission_manager.get_gfg_potd_with_browser,
+            self.submission_manager.submit_gfg_solution,
+        )
 
     def run_daily(self):
-        """Run the complete daily POTD automation with testing"""
-        logging.info("Starting Enhanced Automated Daily POTD System")
-        logging.info("=" * 60)
-
-        # Check configurations
+        logging.info("Starting Automated Daily POTD System")
         if not check_api_keys():
-            logging.error("API keys not configured. Please set environment variables.")
+            logging.error("API keys not configured. Exiting.")
             return
 
-        # Process both platforms
         leetcode_success = self.process_leetcode_potd()
         gfg_success = self.process_gfg_potd()
 
-        # Summary
-        logging.info("=" * 60)
-        logging.info("Daily POTD Summary")
-        logging.info("=" * 60)
-        logging.info(f"LeetCode: {'Success' if leetcode_success else 'Failed'}")
-        logging.info(f"GFG: {'Success' if gfg_success else 'Failed'}")
-
-        # Cleanup
+        logging.info(
+            "=" * 60
+            + "\nDaily POTD Summary\n"
+            + f"  LeetCode: {'SUCCESS' if leetcode_success else 'FAILED'}\n"
+            + f"  GFG:      {'SUCCESS' if gfg_success else 'FAILED'}\n"
+            + "=" * 60
+        )
         self.submission_manager.close_driver()
-        logging.info("Enhanced automated POTD system completed")
+        logging.info("Automated POTD system run completed.")
 
 
 def main():
-    """Main function to run the automated system"""
     system = AutomatedPOTDSystem()
     system.run_daily()
 

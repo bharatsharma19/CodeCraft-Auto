@@ -1,88 +1,35 @@
 import os
 import logging
-from config import (
-    openai_client,
-    gemini_model,
-    MODEL_NAME,
-    USE_GEMINI,
-    check_api_keys,
-)
+
+# Define the base directory for solutions
+SOLUTIONS_DIR = "solutions"
 
 
 def load_local_solution(platform, identifier):
-    path = f"solutions/{platform}/{identifier}.cpp"
+    """Loads a solution from the local filesystem cache."""
+    path = os.path.join(SOLUTIONS_DIR, platform, f"{identifier}.cpp")
     if os.path.exists(path):
-        with open(path) as f:
-            return f.read(), True
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                logging.info(f"Loaded local solution for {platform}/{identifier}")
+                return f.read(), True
+        except IOError as e:
+            logging.error(f"Error reading local solution file {path}: {e}")
+            return None, False
     return None, False
 
 
 def save_solution(platform, identifier, code):
-    path = f"solutions/{platform}/{identifier}.cpp"
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        f.write(code)
-
-
-def generate_solution_with_openai(problem_title, problem_url):
-    if not check_api_keys():
-        return "Error: API keys not configured. Please set OPENAI_API_KEY environment variable."
-
-    if not openai_client:
-        return "Error: OpenAI client not initialized."
-
+    """Saves a generated solution to the local filesystem cache."""
+    path = os.path.join(SOLUTIONS_DIR, platform, f"{identifier}.cpp")
     try:
-        prompt = f"""Write a concise, optimized C++ solution for: {problem_title}
-
-Requirements:
-- Write SHORT, EFFICIENT code
-- Use optimal algorithms and data structures
-- Handle edge cases properly
-- Focus on performance, not verbose explanations
-- Use modern C++ features
-
-Provide ONLY the concise C++ code:
-
-```cpp
-class Solution {{
-public:
-    // Concise optimized solution
-}};
-```"""
-
-        response = openai_client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        return f"Error generating solution with OpenAI: {e}"
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(code)
+        logging.info(f"Saved solution to {path}")
+    except IOError as e:
+        logging.error(f"Error saving solution file {path}: {e}")
 
 
-def generate_solution(problem_title, problem_url):
-    if not USE_GEMINI:
-        return generate_solution_with_openai(problem_title, problem_url)
-    else:
-        if not check_api_keys():
-            return "Error: API keys not configured. Please set GEMINI_API_KEY environment variable."
-
-        if not gemini_model:
-            return "Error: Gemini client not initialized."
-
-        try:
-            response = gemini_model.generate_content(
-                f"""Write a concise, optimized C++ solution for: {problem_title}
-
-Requirements:
-- Write SHORT, EFFICIENT code
-- Use optimal algorithms and data structures
-- Handle edge cases properly
-- Focus on performance, not verbose explanations
-- Use modern C++ features
-
-Provide ONLY the concise C++ code."""
-            )
-            return response.text
-        except Exception as e:
-            return f"Error generating solution with Gemini: {e}"
+# NOTE: Generation functions (generate_solution_with_openai, generate_solution)
+# have been removed from this file as they are now handled robustly in enhanced_solution_manager.py

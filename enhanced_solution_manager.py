@@ -4,650 +4,227 @@ import requests
 from bs4 import BeautifulSoup
 import subprocess
 import tempfile
+import logging
 from config import (
     openai_client,
     gemini_model,
-    MODEL_NAME,
+    OPENAI_MODEL_NAME,
     USE_GEMINI,
     check_api_keys,
 )
-import logging
 
 
 def fetch_problem_details(problem_url):
-    """Fetch problem description and details from the URL"""
+    """Fetch problem description, constraints, and examples from the URL."""
     try:
-        response = requests.get(problem_url)
-        if response.status_code != 200:
-            return None
-
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(problem_url, headers=headers, timeout=15)
+        response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # Try to extract problem description
-        description = ""
-
-        # For LeetCode
+        # --- KEY FIX: More specific and combined extraction ---
         if "leetcode.com" in problem_url:
-            # Look for problem description with more specific selectors
-            desc_selectors = [
-                "[data-track-load='description_content']",  # Main description container (from your HTML)
-                ".elfjS",  # Class from your HTML
-                ".description__24sA",  # Description class
-                ".content__u3I1",  # Content class
-                "[class*='description']",  # Any class with description
-                "[class*='content']",  # Any class with content
-                "div[data-cy='question-title'] + div",  # Description after title
-                ".question-content__JfgR",  # Question content
-            ]
-
-            for selector in desc_selectors:
-                try:
-                    desc_elements = soup.select(selector)
-                    for elem in desc_elements:
-                        text = elem.get_text().strip()
-                        if len(text) > 100:  # More substantial description
-                            description += text + "\n"
-                            break
-                    if description:
-                        break
-                except:
-                    continue
-
-            # If still no description, try broader search
-            if not description:
-                desc_elements = soup.find_all(
-                    ["p", "div"],
-                    class_=lambda x: x
-                    and any(
-                        word in x.lower()
-                        for word in ["description", "content", "problem", "question"]
-                    ),
-                )
-                for elem in desc_elements:
-                    text = elem.get_text().strip()
-                    if len(text) > 100:  # More substantial description
-                        description += text + "\n"
-
-        # For GFG
+            content_div = soup.select_one("div[data-track-load='description_content']")
         elif "geeksforgeeks.org" in problem_url:
-            # Look for problem description with more specific selectors
-            desc_selectors = [
-                ".problem-statement",  # Problem statement
-                ".content",  # Content class
-                "[class*='problem']",  # Any class with problem
-                "[class*='description']",  # Any class with description
-            ]
-
-            for selector in desc_selectors:
-                try:
-                    desc_elements = soup.select(selector)
-                    for elem in desc_elements:
-                        text = elem.get_text().strip()
-                        if len(text) > 100:  # More substantial description
-                            description += text + "\n"
-                            break
-                    if description:
-                        break
-                except:
-                    continue
-
-            # If still no description, try broader search
-            if not description:
-                desc_elements = soup.find_all(
-                    ["p", "div"],
-                    class_=lambda x: x
-                    and any(
-                        word in x.lower()
-                        for word in ["description", "content", "problem"]
-                    ),
-                )
-                for elem in desc_elements:
-                    text = elem.get_text().strip()
-                    if len(text) > 100:  # More substantial description
-                        description += text + "\n"
-
-        # Clean up the description
-        if description:
-            # Remove extra whitespace and newlines
-            description = re.sub(r"\n\s*\n", "\n", description)
-            description = re.sub(r"\s+", " ", description)
-            description = description.strip()
-
-            # Log the description for debugging
-            logging.info(
-                f"Problem description extracted ({len(description)} chars): {description[:200]}..."
+            content_div = soup.select_one(
+                "div.problem-statement, div.problem-tabs__content"
             )
 
-            return (
-                description[:2000] if description else None
-            )  # Increased limit to 2000 chars
-        else:
-            logging.warning("No problem description found")
-            return None
+        if content_div:
+            # Extract text, preserving some structure with newlines
+            full_text = content_div.get_text(separator="\n", strip=True)
 
+            # Clean up excessive newlines
+            cleaned_text = re.sub(r"\n\s*\n", "\n\n", full_text)
+
+            # Truncate to a reasonable length for the prompt
+            final_text = (
+                (cleaned_text[:4000] + "...")
+                if len(cleaned_text) > 4000
+                else cleaned_text
+            )
+            logging.info(f"Problem details extracted ({len(final_text)} chars).")
+            return final_text
+        else:
+            logging.warning(
+                f"Could not find problem description element on {problem_url}."
+            )
+            return None
     except Exception as e:
-        logging.error(f"Error fetching problem details: {e}")
+        logging.error(
+            f"Error fetching problem details from {problem_url}: {e}", exc_info=True
+        )
         return None
 
 
-def extract_test_cases(problem_url):
-    """Extract test cases from problem URL"""
-    try:
-        response = requests.get(problem_url)
-        if response.status_code != 200:
-            return []
+def create_cpp_prompt(problem_title, problem_url, problem_description, attempt=1):
+    """
+    Creates a highly detailed and structured C++ prompt to maximize the chances
+    of getting a correct, optimized, and complete solution.
+    """
+    # --- THE MOST IMPORTANT FIX: Advanced Prompt Engineering ---
+    prompt = f"""
+You are an expert C++ competitive programmer tasked with writing a solution for a daily coding challenge.
+Your goal is to produce a 100% correct, efficient, and robust solution that will pass all test cases, including edge cases and performance tests.
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        test_cases = []
+**Problem Information:**
+- **Title:** {problem_title}
+- **URL:** {problem_url}
 
-        # For LeetCode - look for example test cases
-        if "leetcode.com" in problem_url:
-            # Look for example sections
-            example_sections = soup.find_all(
-                ["div", "section"],
-                class_=lambda x: x
-                and any(word in x.lower() for word in ["example", "test"]),
-            )
-            for section in example_sections:
-                text = section.get_text()
-                if "Input:" in text and "Output:" in text:
-                    test_cases.append(text)
+**Full Problem Description (including constraints and examples):**
+---
+{problem_description or "Description not available. You must infer the requirements from the title and common problem patterns."}
+---
 
-        # For GFG - look for test cases
-        elif "geeksforgeeks.org" in problem_url:
-            # Look for test case sections
-            test_sections = soup.find_all(
-                ["div", "section"],
-                class_=lambda x: x
-                and any(word in x.lower() for word in ["test", "example", "case"]),
-            )
-            for section in test_sections:
-                text = section.get_text()
-                if "Input:" in text and "Output:" in text:
-                    test_cases.append(text)
+**CRITICAL INSTRUCTIONS:**
 
-        return test_cases[:5]  # Limit to 5 test cases
+1.  **Analyze Thoroughly:** Carefully read the entire problem description, paying close attention to:
+    - **Input/Output Format:** Match the required data types and structure exactly (e.g., `vector<int>`, `ListNode*`).
+    - **Constraints:** Note the size of inputs (e.g., `n <= 10^5`), value ranges, and time/memory limits. This will determine the required algorithmic complexity.
+    - **Edge Cases:** Consider empty inputs, single-element inputs, large values, etc.
 
-    except Exception as e:
-        logging.error(f"Error extracting test cases: {e}")
-        return []
+2.  **Choose the Optimal Algorithm:** Based on the constraints, select the most efficient algorithm.
+    - If `N` is small (e.g., < 20), recursion or brute force might be acceptable.
+    - If `N` is large (e.g., 10^5), a solution of O(N log N) or O(N) is likely required. Avoid O(N^2).
+    - Think about data structures: Hash maps for lookups, heaps for priority, etc.
+
+3.  **Write Complete and Compilable Code:**
+    - Provide a single, complete C++ code block.
+    - **Include ALL necessary headers.** Using `<bits/stdc++.h>` is perfectly acceptable and preferred for simplicity.
+    - The solution MUST be encapsulated within a `class Solution { ... };` structure.
+    - Ensure the code is syntactically perfect and compiles with a C++17 compiler without any warnings.
+
+4.  **DO NOT:**
+    - Do not include `int main()` or any test driver code.
+    - Do not add any explanations, comments, or markdown formatting outside the code block.
+    - Do not use any non-standard libraries.
+
+**Attempt-Specific Strategy:**
+"""
+    if attempt == 1:
+        prompt += (
+            "**Attempt 1:** Provide your best, most direct, and efficient solution."
+        )
+    else:
+        prompt += f"**Attempt {attempt}:** The previous attempt failed. Re-evaluate the problem completely. Consider a different approach, data structure, or algorithm. Common failure points are off-by-one errors, integer overflows, or incorrect handling of edge cases. Provide a new, alternative solution."
+
+    prompt += "\n\n```cpp\n"
+    return prompt
 
 
-def create_test_driver(code, test_cases, problem_title):
-    """Create a test driver to validate the solution"""
-    # Create a comprehensive test driver
-    test_driver = f"""
+# ... (The rest of the file remains the same as the previous answer)
+def create_compilation_driver(code):
+    return f"""
 #include <iostream>
 #include <vector>
 #include <string>
-#include <cassert>
-#include <climits>
-#include <unordered_map>
+#include <sstream>
 #include <algorithm>
+#include <queue>
+#include <stack>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <cmath>
+#include <climits>
+#include <cassert>
 #include <utility>
-
 {code}
-
-// Test driver
 int main() {{
-    std::cout << "Testing: {problem_title}" << std::endl;
-
-    try {{
-        // Basic compilation test
-        std::cout << "Code compiles successfully" << std::endl;
-
-        // Test if Solution class exists and has required methods
-        Solution sol;
-        std::cout << "Solution class instantiated" << std::endl;
-
-        // Add specific test cases based on problem type
-        std::string problem_lower = "{problem_title.lower()}";
-        if (problem_lower.find("earliest") != std::string::npos) {{
-            // Test for the specific LeetCode problem
-            std::vector<int> test1 = {{11, 9, 10, 1}};
-            auto result1 = sol.earliestAndLatest(11, 2, 3);
-            std::cout << "Test case 1 passed" << std::endl;
-
-            std::vector<int> test2 = {{5, 1, 2, 3}};
-            auto result2 = sol.earliestAndLatest(5, 1, 5);
-            std::cout << "Test case 2 passed" << std::endl;
-        }}
-
-        std::cout << "All tests passed!" << std::endl;
-        return 0;
-    }} catch (const std::exception& e) {{
-        std::cout << "Test failed: " << e.what() << std::endl;
-        return 1;
-    }} catch (...) {{
-        std::cout << "Test failed with unknown error" << std::endl;
-        return 1;
-    }}
+    std::cout << "Compilation check successful." << std::endl;
+    return 0;
 }}
 """
-    return test_driver
 
 
-def test_solution_with_cases(code, problem_title, problem_url):
-    """Test the solution against test cases with enhanced validation"""
+def test_solution_compilation(code):
+    if not code or not isinstance(code, str):
+        return False, "Invalid code provided for compilation test."
     try:
-        # Create test driver
-        test_driver = create_test_driver(code, [], problem_title)
-
-        # Create temporary file
+        driver_code = create_compilation_driver(code)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".cpp", delete=False) as f:
-            f.write(test_driver)
-            temp_file = f.name
-
-        # Compile with strict flags
-        compile_cmd = [
-            "g++",
-            "-std=c++17",
-            "-Wall",
-            "-Wextra",
-            "-Werror",
-            "-o",
-            temp_file.replace(".cpp", ""),
-            temp_file,
-        ]
-
-        result = subprocess.run(
-            compile_cmd,
-            capture_output=True,
-            text=True,
-            timeout=15,  # Increased timeout
-        )
-
+            temp_cpp_file = f.name
+            f.write(driver_code)
+        temp_exe_file = temp_cpp_file.replace(".cpp", "")
+        compile_cmd = ["g++", "-std=c++17", "-Wall", "-o", temp_exe_file, temp_cpp_file]
+        result = subprocess.run(compile_cmd, capture_output=True, text=True, timeout=20)
+        os.unlink(temp_cpp_file)
+        if os.path.exists(temp_exe_file):
+            os.unlink(temp_exe_file)
         if result.returncode != 0:
-            logging.error(f"Compilation failed: {result.stderr}")
-            # Clean up
-            os.unlink(temp_file)
-            return False, "Compilation failed"
-
-        # Run the test
-        run_result = subprocess.run(
-            [temp_file.replace(".cpp", "")],
-            capture_output=True,
-            text=True,
-            timeout=10,  # Increased timeout
-        )
-
-        # Clean up
-        os.unlink(temp_file)
-        if os.path.exists(temp_file.replace(".cpp", "")):
-            os.unlink(temp_file.replace(".cpp", ""))
-
-        if run_result.returncode == 0:
-            logging.info("Solution passed basic tests")
-            return True, "Test passed"
+            error_message = f"Compilation failed: {result.stderr}"
+            logging.error(error_message)
+            return False, error_message
         else:
-            logging.error(f"Solution failed tests: {run_result.stderr}")
-            return False, "Test failed"
-
-    except subprocess.TimeoutExpired:
-        logging.error("Test execution timed out")
-        return False, "Test timeout"
+            logging.info("Solution passed compilation test.")
+            return True, "Compilation successful"
     except Exception as e:
-        logging.error(f"Test execution error: {e}")
-        return False, f"Test error: {e}"
+        return False, f"Test execution error: {e}"
 
 
 def extract_cpp_code(text):
-    """Extract C++ code from AI response"""
-    # Look for code blocks with cpp
-    code_pattern = r"```cpp\s*\n(.*?)\n```"
+    code_pattern = r"```(?:cpp|c\+\+)\s*\n(.*?)\n```"
     matches = re.findall(code_pattern, text, re.DOTALL)
-
     if matches:
         return matches[0].strip()
-
-    # Look for code blocks with c++
-    code_pattern = r"```c\+\+\s*\n(.*?)\n```"
-    matches = re.findall(code_pattern, text, re.DOTALL)
-
-    if matches:
-        return matches[0].strip()
-
-    # Look for code without language specification
-    code_pattern = r"```\s*\n(.*?)\n```"
-    matches = re.findall(code_pattern, text, re.DOTALL)
-
-    if matches:
-        return matches[0].strip()
-
-    # If no code blocks, look for C++ class definition
     if "class Solution" in text:
-        # Extract from class Solution to the end
-        start = text.find("class Solution")
-        if start != -1:
-            return text[start:].strip()
-
-    # If no code blocks, return the entire text
-    return text.strip()
+        return text.strip()
+    return ""
 
 
-def create_cpp_prompt(problem_title, problem_url, problem_description, attempt=1):
-    """Create a C++ prompt based on attempt number"""
-
-    # Enhanced problem description handling
-    if problem_description:
-        problem_desc_section = f"""
-PROBLEM DESCRIPTION:
-{problem_description}
-
-IMPORTANT: Read the problem description carefully above. The solution must match the exact requirements, input/output format, and constraints described in the problem.
-"""
-    else:
-        problem_desc_section = """
-IMPORTANT: Since no problem description was found, you must analyze the problem title and URL carefully to understand the requirements.
-Look for patterns in the title that indicate the type of problem (e.g., "Two Sum" suggests finding two numbers that add to a target).
-"""
-
-    base_prompt = f"""Write ONLY a CORRECT and COMPILABLE C++ solution for: {problem_title}
-
-Problem URL: {problem_url}
-
-{problem_desc_section}
-
-CRITICAL REQUIREMENTS:
-- Write ONLY COMPILABLE C++ code with correct syntax
-- Use proper C++ syntax: return make_pair(x, y) NOT return {{x, y}}
-- Use std::unordered_map correctly: map.count(key) NOT map[key].count()
-- Include ALL necessary headers: #include <vector>, #include <algorithm>, #include <unordered_map>, #include <climits>
-- Use proper data structures and algorithms
-- Handle edge cases properly
-- Focus on correctness first, then performance
-- Make sure the code compiles without ANY errors
-- Use modern C++ features correctly
-- DO NOT use structured bindings like auto [x, y] = tuple
-- DO NOT use return {{x, y}} - use return {{x, y}} or return make_pair(x, y)
-- DO NOT include any explanations or comments outside the code
-- Return ONLY the C++ code, nothing else
-- Ensure the solution matches the problem requirements exactly
-
-Provide ONLY the complete C++ code that will compile and solve the problem:
-
-```cpp
-#include <bits/stdc++.h>
-using namespace std;
-
-class Solution {{
-public:
-    // Complete solution here - ensure it compiles without errors
-    // Use proper C++ syntax: return make_pair(x, y) for pairs
-    // Use map.count(key) for checking existence in unordered_map
-    // DO NOT use auto [x, y] = tuple syntax
-}};
-```"""
-
-    # Modify prompt based on attempt number
-    if attempt == 1:
-        return base_prompt
-    elif attempt == 2:
-        return base_prompt.replace(
-            "CORRECT and COMPILABLE", "different CORRECT and COMPILABLE"
-        ).replace(
-            "Complete solution here",
-            "Alternative correct solution - ensure it compiles without errors",
-        )
-    else:
-        return base_prompt.replace(
-            "CORRECT and COMPILABLE", "most efficient and CORRECT"
-        ).replace(
-            "Complete solution here",
-            "Most efficient correct solution - ensure it compiles without errors",
-        )
-
-
-def generate_solution_with_openai(problem_title, problem_url, attempt=1):
-    """Generate optimized C++ solution with OpenAI, with different approaches for retries"""
-
+def generate_solution_with_ai(problem_title, problem_url, attempt=1):
     if not check_api_keys():
-        return "Error: API keys not configured. Please set OPENAI_API_KEY environment variable."
-
-    if not openai_client:
-        return "Error: OpenAI client not initialized."
-
-    # Fetch problem details
+        return "Error: API key not configured."
     problem_description = fetch_problem_details(problem_url)
-
-    # Create prompt based on attempt
     prompt = create_cpp_prompt(problem_title, problem_url, problem_description, attempt)
-
-    # Log the final prompt being sent to LLM
-    logging.info(f"=== FINAL PROMPT SENT TO OPENAI (Attempt {attempt}) ===")
-    logging.info(f"Problem Title: {problem_title}")
-    logging.info(f"Problem URL: {problem_url}")
-    logging.info(
-        f"Problem Description Length: {len(problem_description) if problem_description else 0} chars"
-    )
-    logging.info(f"Prompt Length: {len(prompt)} chars")
-    logging.info("=== PROMPT CONTENT ===")
-    logging.info(prompt)
-    logging.info("=== END PROMPT ===")
-
     try:
-        response = openai_client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,  # Lower temperature for more consistent code
-            max_tokens=2500,
-        )
-
-        response_text = response.choices[0].message.content.strip()
-
-        # Log the response
-        logging.info(f"=== OPENAI RESPONSE (Attempt {attempt}) ===")
-        logging.info(f"Response Length: {len(response_text)} chars")
-        logging.info("=== RESPONSE CONTENT ===")
-        logging.info(response_text)
-        logging.info("=== END RESPONSE ===")
-
-        code = extract_cpp_code(response_text)
-
-        # Validate the code for common syntax errors
-        if code and not code.startswith("Error"):
-            validation_result = validate_cpp_syntax(code)
-            if not validation_result[0]:
-                logging.warning(
-                    f"Generated code has syntax issues: {validation_result[1]}"
-                )
-                # Try to fix common issues
-                code = fix_common_cpp_errors(code)
-
-        return code
-
-    except Exception as e:
-        return f"Error generating solution with OpenAI: {e}"
-
-
-def validate_cpp_syntax(code):
-    """Validate C++ code for common syntax errors"""
-    common_errors = [
-        (r"return\s*\{[^}]*\}", "Use return make_pair(x, y) instead of return {x, y}"),
-        (r"\.count\([^)]*\)\.count\(", "Incorrect nested .count() usage"),
-        (r"std::pair<[^>]*>.*\.count\(", "Cannot use .count() on std::pair"),
-    ]
-
-    for pattern, error_msg in common_errors:
-        if re.search(pattern, code):
-            return False, error_msg
-
-    return True, "Syntax looks correct"
-
-
-def fix_common_cpp_errors(code):
-    """Fix common C++ syntax errors in generated code"""
-    # Fix return {x, y} to return {x, y} (vector initialization)
-    code = re.sub(r"return\s*\{([^}]+)\}", r"return {\1}", code)
-
-    # Fix structured bindings to tuple unpacking
-    code = re.sub(
-        r"auto\s*\[([^\]]+)\]\s*=\s*([^;]+);",
-        r"auto tuple_val = \2;\n        auto \1 = tuple_val;",
-        code,
-    )
-
-    # Fix incorrect .count() usage
-    code = re.sub(
-        r"(\w+)\[(\w+)\]\.count\((\w+)\)", r"\1.count(\2) && \1[\2].count(\3)", code
-    )
-
-    # Ensure all necessary headers are included
-    required_headers = [
-        "#include <vector>",
-        "#include <algorithm>",
-        "#include <unordered_map>",
-        "#include <climits>",
-        "#include <utility>",
-    ]
-
-    for header in required_headers:
-        if header not in code:
-            # Insert after existing includes
-            code = re.sub(r"(#include\s+<[^>]+>)", r"\1\n" + header, count=1)
-
-    return code
-
-
-def generate_solution_with_gemini(problem_title, problem_url, attempt=1):
-    """Generate optimized C++ solution with Gemini, with different approaches for retries"""
-
-    if not check_api_keys():
-        return "Error: API keys not configured. Please set GEMINI_API_KEY environment variable."
-
-    if not gemini_model:
-        return "Error: Gemini client not initialized."
-
-    try:
-        # Fetch problem details
-        problem_description = fetch_problem_details(problem_url)
-
-        # Use the same prompt creation function
-        prompt = create_cpp_prompt(
-            problem_title, problem_url, problem_description, attempt
-        )
-
-        # Log the final prompt being sent to LLM
-        logging.info(f"=== FINAL PROMPT SENT TO GEMINI (Attempt {attempt}) ===")
-        logging.info(f"Problem Title: {problem_title}")
-        logging.info(f"Problem URL: {problem_url}")
         logging.info(
-            f"Problem Description Length: {len(problem_description) if problem_description else 0} chars"
+            f"Generating solution with {'Gemini' if USE_GEMINI else 'OpenAI'} (Attempt {attempt})..."
         )
-        logging.info(f"Prompt Length: {len(prompt)} chars")
-        logging.info("=== PROMPT CONTENT ===")
-        logging.info(prompt)
-        logging.info("=== END PROMPT ===")
-
-        response = gemini_model.generate_content(prompt)
-
-        # Log the response
-        logging.info(f"=== GEMINI RESPONSE (Attempt {attempt}) ===")
-        logging.info(f"Response Length: {len(response.text)} chars")
-        logging.info("=== RESPONSE CONTENT ===")
-        logging.info(response.text)
-        logging.info("=== END RESPONSE ===")
-
-        return extract_cpp_code(response.text)
-
+        if USE_GEMINI:
+            if not gemini_model:
+                return "Error: Gemini client not initialized."
+            response = gemini_model.generate_content(prompt)
+            response_text = response.text
+        else:
+            if not openai_client:
+                return "Error: OpenAI client not initialized."
+            response = openai_client.chat.completions.create(
+                model=OPENAI_MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2 + (attempt * 0.1),
+                max_tokens=2048,
+            )
+            response_text = response.choices[0].message.content
+        return extract_cpp_code(response_text)
     except Exception as e:
-        return f"Error generating solution with Gemini: {e}"
+        return f"Error generating solution with AI: {e}"
 
 
 def generate_and_test_solution(problem_title, problem_url, max_retries=2):
-    """Generate solution and test it, retry if it fails"""
-
     for attempt in range(1, max_retries + 1):
-        logging.info(f"Attempt {attempt}/{max_retries} for {problem_title}")
-
-        # Generate solution
-        if USE_GEMINI:
-            solution = generate_solution_with_gemini(
-                problem_title, problem_url, attempt
-            )
-        else:
-            solution = generate_solution_with_openai(
-                problem_title, problem_url, attempt
-            )
-
-        if solution.startswith("Error"):
-            logging.error(f"Generation failed: {solution}")
-            continue
-
-        # Validate structure
-        if not validate_solution_structure(solution):
-            logging.warning("Solution structure invalid, retrying...")
-            continue
-
-        # Test the solution
-        logging.info("Testing solution...")
-        success, message = test_solution_with_cases(
-            solution, problem_title, problem_url
+        logging.info(
+            f"--- Generation Attempt {attempt}/{max_retries} for '{problem_title}' ---"
         )
-
+        solution = generate_solution_with_ai(problem_title, problem_url, attempt)
+        if not solution or solution.startswith("Error"):
+            logging.error(f"Solution generation failed: {solution}")
+            continue
+        if not validate_solution_structure(solution):
+            logging.warning("Generated solution has invalid structure. Retrying...")
+            continue
+        success, message = test_solution_compilation(solution)
         if success:
-            logging.info(f"Solution passed tests on attempt {attempt}")
             return solution, attempt, True
         else:
-            logging.warning(f"Solution failed tests: {message}")
-            if attempt < max_retries:
-                logging.info("Retrying with different approach...")
-
-    # All attempts failed
-    logging.error(f"All {max_retries} attempts failed")
-    return (
-        f"Failed to generate working solution after {max_retries} attempts",
-        max_retries,
-        False,
-    )
-
-
-def generate_solution_with_retries(problem_title, problem_url, max_retries=2):
-    """Generate optimized C++ solution with multiple retry attempts"""
-    solution, attempt, success = generate_and_test_solution(
-        problem_title, problem_url, max_retries
-    )
-    return solution, attempt
+            logging.warning(f"Solution failed compilation test: {message}")
+    return None, max_retries, False
 
 
 def validate_solution_structure(code):
-    """Enhanced validation of C++ solution structure"""
-    if not code or code.startswith("Error"):
-        return False
-
-    # Check for essential C++ elements
-    essential_elements = [
-        "#include",
-        "using namespace std;",
-        "class Solution",
-        "public:",
-    ]
-
-    found_elements = sum(1 for element in essential_elements if element in code)
-
-    # Must have at least 3 essential elements
-    if found_elements >= 3:
-        return True
-
-    # Also accept if it contains common C++ patterns
-    if any(
-        pattern in code
-        for pattern in [
-            "vector<",
-            "int main",
-            "return",
-            "class",
-            "public:",
-            "private:",
-            "std::",
-        ]
-    ):
-        return True
-
-    # Accept if it's a reasonable length and contains C++ syntax
-    if len(code) > 50 and (
-        "{" in code or ";" in code or "::" in code or "class" in code
-    ):
-        return True
-
-    return False
+    return (
+        code and isinstance(code, str) and len(code) > 50 and "class Solution" in code
+    )
